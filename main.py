@@ -3,34 +3,52 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from transformers import pipeline
-from sentence_transformers import SentenceTransformer
 from groq import Groq
-import numpy as np
-import json
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import sqlite3
 import os
 
 from email_service import fetch_email_list, fetch_email_body, send_reply, save_config, load_config, test_connection
 
-# ── Groq client ────────────────────────────────────────────────────────────
+# ── Groq ───────────────────────────────────────────────────────────────────
 _groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-def query_groq(prompt):
-    response = _groq_client.chat.completions.create(
-        model="llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": prompt}]
-    )
-    return response.choices[0].message.content
 
 def query_model(prompt):
     try:
-        return query_groq(prompt)
+        response = _groq_client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response.choices[0].message.content
     except Exception as e:
         print("GROQ ERROR:", e)
         return "AI service error. Please try again."
 
-# ── App setup ──────────────────────────────────────────────────────────────
+# ── Sentiment (VADER — no model download) ─────────────────────────────────
+_vader = SentimentIntensityAnalyzer()
+
+def analyze_sentiment(text):
+    compound = _vader.polarity_scores(text)["compound"]
+    label = "POSITIVE" if compound >= 0.05 else ("NEGATIVE" if compound <= -0.05 else "NEUTRAL")
+    return label, round(abs(compound), 3)
+
+# ── Similarity search (TF-IDF — no torch) ─────────────────────────────────
+def find_similar(query, texts, top_n=5, threshold=0.1):
+    if not texts:
+        return []
+    docs = [query] + list(texts)
+    try:
+        matrix = TfidfVectorizer(stop_words="english").fit_transform(docs)
+    except ValueError:
+        return []
+    scores = cosine_similarity(matrix[0:1], matrix[1:])[0]
+    results = [(texts[i], float(scores[i])) for i in range(len(texts)) if scores[i] > threshold]
+    results.sort(key=lambda x: x[1], reverse=True)
+    return results[:top_n]
+
+# ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI()
 
 app.add_middleware(
@@ -41,27 +59,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-sentiment_analyzer = pipeline("sentiment-analysis")
-
 # ── Database ───────────────────────────────────────────────────────────────
 conn = sqlite3.connect("data.db", check_same_thread=False)
 cursor = conn.cursor()
 
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS records (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    text TEXT,
-    sentiment TEXT,
-    confidence REAL,
-    embedding TEXT
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    text        TEXT,
+    sentiment   TEXT,
+    confidence  REAL,
+    session_id  TEXT
 )
 """)
 conn.commit()
 
+# keep backward compat with older DBs that had session_id added as a migration
 cursor.execute("PRAGMA table_info(records)")
-columns = [col[1] for col in cursor.fetchall()]
-if "session_id" not in columns:
+if "session_id" not in [col[1] for col in cursor.fetchall()]:
     cursor.execute("ALTER TABLE records ADD COLUMN session_id TEXT")
     conn.commit()
 
@@ -74,71 +89,45 @@ def home():
 
 @app.post("/analyze")
 def analyze(data: dict):
-    text = data.get("text")
+    text       = data.get("text")
     session_id = data.get("session_id", "default")
 
     if not text:
         return {"error": "No text provided"}
 
-    result = sentiment_analyzer(text)[0]
-    sentiment = result["label"]
-    confidence = round(result["score"], 3)
-
-    vector_str = json.dumps(embedding_model.encode(text).tolist())
+    sentiment, confidence = analyze_sentiment(text)
     cursor.execute(
-        "INSERT INTO records (text, sentiment, confidence, embedding) VALUES (?, ?, ?, ?)",
-        (text, sentiment, confidence, vector_str)
+        "INSERT INTO records (text, sentiment, confidence, session_id) VALUES (?,?,?,?)",
+        (text, sentiment, confidence, session_id)
     )
     conn.commit()
-
     return {"input_text": text, "sentiment": sentiment, "confidence": confidence}
 
 
 @app.post("/search")
 def search(data: dict):
     query = data.get("text")
-
     if not query:
         return {"error": "No query provided"}
 
-    query_vector = embedding_model.encode(query)
-    cursor.execute("SELECT id, text, embedding FROM records")
-    rows = cursor.fetchall()
-
-    results = []
-    for row in rows:
-        stored_vector = np.array(json.loads(row[2]))
-        score = np.dot(query_vector, stored_vector)
-        results.append({"text": row[1], "score": float(score)})
-
-    results = sorted(results, key=lambda x: x["score"], reverse=True)
-    return {"results": results[:3]}
+    cursor.execute("SELECT text FROM records")
+    texts = [row[0] for row in cursor.fetchall()]
+    results = find_similar(query, texts, top_n=3, threshold=0.0)
+    return {"results": [{"text": t, "score": s} for t, s in results]}
 
 
 @app.post("/rag")
 def rag(data: dict):
-    query = data.get("text")
+    query      = data.get("text")
+    session_id = data.get("session_id", "default")
 
     if not query:
         return {"error": "No query provided"}
 
-    query_vector = embedding_model.encode(query)
-    session_id = data.get("session_id", "default")
-
-    cursor.execute("SELECT text, embedding FROM records WHERE session_id=?", (session_id,))
-    rows = cursor.fetchall()
-
-    results = []
-    for row in rows:
-        stored_vector = np.array(json.loads(row[1]))
-        score = np.dot(query_vector, stored_vector) / (
-            np.linalg.norm(query_vector) * np.linalg.norm(stored_vector)
-        )
-        if score > 0.5:
-            results.append((row[0], score))
-
-    results = sorted(results, key=lambda x: x[1], reverse=True)
-    context = "\n".join([r[0] for r in results[:5]])
+    cursor.execute("SELECT text FROM records WHERE session_id=?", (session_id,))
+    texts   = [row[0] for row in cursor.fetchall()]
+    similar = find_similar(query, texts, threshold=0.1)
+    context = "\n".join(t for t, _ in similar)
 
     prompt = f"""
 You are a professional customer support assistant.
@@ -156,52 +145,34 @@ Current User Query:
 
 Final Answer:
 """
-
     response_text = query_model(prompt)
 
-    result = sentiment_analyzer(query)[0]
-    sentiment = result["label"]
-    confidence = round(result["score"], 3)
-    vector_str = json.dumps(embedding_model.encode(query).tolist())
-
+    sentiment, confidence = analyze_sentiment(query)
     cursor.execute(
-        "INSERT INTO records (text, sentiment, confidence, embedding, session_id) VALUES (?, ?, ?, ?, ?)",
-        (query, sentiment, confidence, vector_str, session_id)
+        "INSERT INTO records (text, sentiment, confidence, session_id) VALUES (?,?,?,?)",
+        (query, sentiment, confidence, session_id)
     )
     conn.commit()
-
     return {"query": query, "response": response_text, "context_used": context}
 
 
 @app.get("/records")
 def get_records():
-    cursor.execute("SELECT * FROM records")
-    rows = cursor.fetchall()
-
-    data = []
-    for row in rows:
-        data.append({
-            "id": row[0],
-            "text": row[1],
-            "sentiment": row[2],
-            "confidence": row[3],
-            "session_id": row[5] if len(row) > 5 else "default"
-        })
-
-    return {"data": data}
+    cursor.execute("SELECT id, text, sentiment, confidence, session_id FROM records")
+    return {"data": [
+        {"id": r[0], "text": r[1], "sentiment": r[2], "confidence": r[3], "session_id": r[4] or "default"}
+        for r in cursor.fetchall()
+    ]}
 
 
 @app.get("/stats")
 def stats():
     cursor.execute("SELECT COUNT(DISTINCT session_id) FROM records")
     total = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM records WHERE sentiment='POSITIVE'")
     positive = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM records WHERE sentiment='NEGATIVE'")
     negative = cursor.fetchone()[0]
-
     return {"total": total, "positive": positive, "negative": negative}
 
 
@@ -221,8 +192,7 @@ Support Reply:
 
 @app.post("/email/connect")
 def connect_email(data: dict):
-    required = ["email", "password", "imap_host", "imap_port", "smtp_host", "smtp_port"]
-    for field in required:
+    for field in ["email", "password", "imap_host", "imap_port", "smtp_host", "smtp_port"]:
         if not data.get(field):
             return {"status": "error", "message": f"Missing field: {field}"}
     try:
@@ -251,8 +221,7 @@ def get_emails(limit: int = 20):
     if not config:
         return {"status": "error", "message": "Email not configured. Use /email/connect first."}
     try:
-        emails = fetch_email_list(config, limit=limit)
-        return {"status": "ok", "emails": emails}
+        return {"status": "ok", "emails": fetch_email_list(config, limit=limit)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -263,8 +232,7 @@ def get_email_body(email_id: str):
     if not config:
         return {"status": "error", "message": "Email not configured."}
     try:
-        body = fetch_email_body(config, email_id)
-        return {"status": "ok", "body": body}
+        return {"status": "ok", "body": fetch_email_body(config, email_id)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -284,19 +252,10 @@ def auto_reply_email(data: dict):
         return {"status": "error", "message": "Email body is empty."}
 
     session_id = f"email-{from_addr}"
-
-    query_vector = embedding_model.encode(body[:512])
-    cursor.execute("SELECT text, embedding FROM records WHERE session_id=?", (session_id,))
-    rows = cursor.fetchall()
-    context_parts = []
-    for row in rows:
-        sv = np.array(json.loads(row[1]))
-        score = float(np.dot(query_vector, sv) / (
-            (np.linalg.norm(query_vector) * np.linalg.norm(sv)) + 1e-9))
-        if score > 0.4:
-            context_parts.append((row[0], score))
-    context_parts.sort(key=lambda x: x[1], reverse=True)
-    context = "\n".join(r[0] for r in context_parts[:5])
+    cursor.execute("SELECT text FROM records WHERE session_id=?", (session_id,))
+    texts   = [row[0] for row in cursor.fetchall()]
+    similar = find_similar(body[:512], texts, threshold=0.1)
+    context = "\n".join(t for t, _ in similar)
 
     prompt = EMAIL_PROMPT_TEMPLATE.format(body=body)
     if context:
@@ -304,11 +263,10 @@ def auto_reply_email(data: dict):
 
     ai_response = query_model(prompt)
 
-    result = sentiment_analyzer(body[:512])[0]
-    vector_str = json.dumps(embedding_model.encode(body[:512]).tolist())
+    sentiment, confidence = analyze_sentiment(body[:512])
     cursor.execute(
-        "INSERT INTO records (text, sentiment, confidence, embedding, session_id) VALUES (?,?,?,?,?)",
-        (body, result["label"], round(result["score"], 3), vector_str, session_id)
+        "INSERT INTO records (text, sentiment, confidence, session_id) VALUES (?,?,?,?)",
+        (body, sentiment, confidence, session_id)
     )
     conn.commit()
 
@@ -320,12 +278,7 @@ def auto_reply_email(data: dict):
         except Exception as e:
             send_status = f"failed: {e}"
 
-    return {
-        "status": "ok",
-        "response": ai_response,
-        "context_used": context,
-        "send_status": send_status,
-    }
+    return {"status": "ok", "response": ai_response, "context_used": context, "send_status": send_status}
 
 
 @app.post("/email/send")
@@ -341,8 +294,7 @@ def send_manual_email(data: dict):
     if not body:
         return {"status": "error", "message": "Reply body is empty."}
     try:
-        send_reply(config, to_addr=to, subject=subj, body=body,
-                   in_reply_to=data.get("message_id", ""))
+        send_reply(config, to_addr=to, subject=subj, body=body, in_reply_to=data.get("message_id", ""))
         return {"status": "sent", "to": to}
     except Exception as e:
         import traceback
@@ -353,21 +305,10 @@ def send_manual_email(data: dict):
 # ── Auto-reply pipeline ────────────────────────────────────────────────────
 
 _UNCERTAINTY_MARKERS = [
-    "i don't have information",
-    "i'm not sure",
-    "i cannot help",
-    "i can't help",
-    "outside my knowledge",
-    "i don't know",
-    "unable to assist",
-    "cannot determine",
-    "no information available",
-    "i lack the",
-    "not within my",
-    "please contact",
-    "reach out to",
-    "speak with a",
-    "escalate",
+    "i don't have information", "i'm not sure", "i cannot help", "i can't help",
+    "outside my knowledge", "i don't know", "unable to assist", "cannot determine",
+    "no information available", "i lack the", "not within my", "please contact",
+    "reach out to", "speak with a", "escalate",
 ]
 
 AUTO_REPLY_PROMPT = """\
@@ -401,18 +342,10 @@ def auto_reply_pipeline(data: dict):
     if not text:
         return {"status": "error", "message": "Empty message"}
 
-    query_vector = embedding_model.encode(text[:512])
-    cursor.execute("SELECT text, embedding FROM records WHERE session_id=?", (session_id,))
-    rows = cursor.fetchall()
-    context_parts = []
-    for row in rows:
-        sv = np.array(json.loads(row[1]))
-        norm = np.linalg.norm(query_vector) * np.linalg.norm(sv) + 1e-9
-        score = float(np.dot(query_vector, sv) / norm)
-        if score > 0.4:
-            context_parts.append((row[0], score))
-    context_parts.sort(key=lambda x: x[1], reverse=True)
-    context = "\n".join(r[0] for r in context_parts[:5])
+    cursor.execute("SELECT text FROM records WHERE session_id=?", (session_id,))
+    texts   = [row[0] for row in cursor.fetchall()]
+    similar = find_similar(text[:512], texts, threshold=0.1)
+    context = "\n".join(t for t, _ in similar)
 
     prompt = AUTO_REPLY_PROMPT.format(context=context or "No relevant context found.", message=text)
     raw    = query_model(prompt)
@@ -443,11 +376,10 @@ def auto_reply_pipeline(data: dict):
     if context and not can_handle:
         confidence = 35
 
-    sentiment_result = sentiment_analyzer(text[:512])[0]
-    vector_str = json.dumps(embedding_model.encode(text[:512]).tolist())
+    sentiment, conf = analyze_sentiment(text[:512])
     cursor.execute(
-        "INSERT INTO records (text, sentiment, confidence, embedding, session_id) VALUES (?,?,?,?,?)",
-        (text, sentiment_result["label"], round(sentiment_result["score"], 3), vector_str, session_id)
+        "INSERT INTO records (text, sentiment, confidence, session_id) VALUES (?,?,?,?)",
+        (text, sentiment, conf, session_id)
     )
     conn.commit()
 
