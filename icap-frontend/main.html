@@ -1,0 +1,1691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>ICAP — Operator Inbox</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #0a0f1e;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      background: #111827;
+      border-bottom: 1px solid #1e293b;
+      padding: 11px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      gap: 16px;
+    }
+    .logo { font-size: 17px; font-weight: 700; color: #38bdf8; letter-spacing: 1px; white-space: nowrap; }
+    .logo span { color: #818cf8; }
+    .header-center { display: flex; align-items: center; gap: 10px; flex: 1; justify-content: center; }
+    .email-pill {
+      display: flex; align-items: center; gap: 7px;
+      background: #1a2a1a; border: 1px solid #1f4a1f; border-radius: 20px;
+      padding: 4px 12px; font-size: 12px; color: #4ade80;
+    }
+    .email-pill.disconnected { background: #1e293b; border-color: #334155; color: #64748b; }
+    .email-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+    .header-right { display: flex; align-items: center; gap: 10px; }
+    .status { font-size: 12px; color: #64748b; display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+    /* Live polling indicator */
+    .live-pill {
+      display: flex; align-items: center; gap: 6px;
+      background: #0f1e10; border: 1px solid #1a4020; border-radius: 20px;
+      padding: 3px 10px; font-size: 11px; color: #4ade80; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .live-pill:hover { background: #1a3020; }
+    .live-pill.paused { background: #1e293b; border-color: #334155; color: #64748b; }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #4ade80; flex-shrink: 0;
+      animation: pulse-live 2s infinite;
+    }
+    .live-pill.paused .live-dot { background: #64748b; animation: none; }
+    @keyframes pulse-live {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.4; transform: scale(0.7); }
+    }
+
+    /* New-items badge on inbox count */
+    .new-badge {
+      display: inline-block; margin-left: 6px;
+      background: #1d4ed8; color: #bfdbfe;
+      font-size: 10px; font-weight: 700;
+      padding: 1px 7px; border-radius: 20px;
+      animation: fadeIn 0.3s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1); } }
+    .btn-icon {
+      width: 34px; height: 34px;
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      color: #94a3b8; cursor: pointer; font-size: 16px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+    }
+    .btn-icon:hover { background: #334155; color: #e2e8f0; }
+
+    /* ── Tabs ── */
+    .tabs {
+      background: #111827; border-bottom: 1px solid #1e293b;
+      padding: 0 22px; display: flex; gap: 4px; flex-shrink: 0;
+    }
+    .tab {
+      padding: 9px 18px; cursor: pointer; font-size: 13px;
+      color: #64748b; border-bottom: 2px solid transparent;
+      transition: all 0.2s; user-select: none;
+    }
+    .tab:hover { color: #cbd5e1; }
+    .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+
+    /* ── Panels ── */
+    .panel { display: none; }
+    .panel.active {
+      display: flex;
+      flex: 1 1 0;     /* basis 0 so the panel doesn't start at content height */
+      min-height: 0;   /* CRITICAL: lets the panel shrink below content size   */
+      overflow: hidden;
+    }
+    #panel-inbox { flex-direction: row; }
+
+    /* ── Inbox sidebar ── */
+    .inbox-sidebar {
+      width: 300px; min-width: 260px;
+      background: #111827; border-right: 1px solid #1e293b;
+      display: flex; flex-direction: column; flex-shrink: 0;
+      overflow: hidden;   /* contain its column children */
+      min-height: 0;
+    }
+    .inbox-toolbar {
+      padding: 11px 12px; border-bottom: 1px solid #1e293b;
+      display: flex; align-items: center; gap: 7px;
+    }
+    .inbox-search {
+      flex: 1; padding: 7px 11px;
+      background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+      color: #e2e8f0; font-size: 13px; outline: none;
+    }
+    .inbox-search:focus { border-color: #38bdf8; }
+    .inbox-search::placeholder { color: #475569; }
+    .btn-toolbar {
+      padding: 7px 9px; background: #1e293b; border: 1px solid #334155;
+      border-radius: 8px; color: #94a3b8; cursor: pointer;
+      font-size: 13px; white-space: nowrap; transition: all 0.2s;
+    }
+    .btn-toolbar:hover { background: #334155; color: #e2e8f0; }
+    .btn-toolbar.highlight { background: #1a3a2a; border-color: #1f6040; color: #4ade80; }
+    .btn-toolbar.highlight:hover { background: #1f4a30; }
+
+    .inbox-filter {
+      padding: 6px 12px; border-bottom: 1px solid #1e293b;
+      display: flex; gap: 5px; flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 3px 10px; border-radius: 12px; border: 1px solid #334155;
+      background: transparent; color: #64748b; font-size: 11px;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .filter-btn:hover { border-color: #38bdf8; color: #38bdf8; }
+    .filter-btn.active { background: #1a2a4a; border-color: #38bdf8; color: #38bdf8; }
+
+    .inbox-count { padding: 7px 14px 3px; font-size: 11px; color: #475569; text-transform: uppercase; letter-spacing: 0.8px; flex-shrink: 0; }
+    .inbox-list { flex: 1; min-height: 0; overflow-y: auto; }
+    .inbox-list::-webkit-scrollbar { width: 4px; }
+    .inbox-list::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+
+    /* Inbox items */
+    .inbox-item {
+      padding: 12px 13px; border-bottom: 1px solid #151e2e;
+      cursor: pointer; transition: background 0.15s;
+      display: flex; gap: 10px; align-items: flex-start;
+    }
+    .inbox-item:hover { background: #162032; }
+    .inbox-item.active { background: #1a2a4a; border-left: 3px solid #38bdf8; padding-left: 10px; }
+    .inbox-avatar {
+      width: 36px; height: 36px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; flex-shrink: 0; color: #fff;
+    }
+    .inbox-item-body { flex: 1; min-width: 0; }
+    .inbox-item-header { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 2px; }
+    .inbox-item-name { font-size: 13px; color: #cbd5e1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .inbox-item-time { font-size: 10px; color: #475569; flex-shrink: 0; }
+    .inbox-item-subject { font-size: 12px; color: #7a8fa8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .inbox-item-preview { font-size: 11px; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 4px; }
+    .inbox-item-footer { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+
+    .badge-sm { font-size: 10px; padding: 1px 7px; border-radius: 12px; font-weight: 600; }
+    .badge-sm.POSITIVE     { background: #14532d; color: #4ade80; }
+    .badge-sm.NEGATIVE     { background: #450a0a; color: #f87171; }
+    .badge-sm.NEUTRAL      { background: #1e293b; color: #94a3b8; }
+    .badge-sm.email        { background: #1a2f4a; color: #38bdf8; }
+    .badge-sm.chat         { background: #2a1a4a; color: #818cf8; }
+    .badge-sm.ai-handled   { background: #14532d; color: #4ade80; }
+    .badge-sm.needs-human  { background: #451a00; color: #fb923c; }
+    .badge-sm.processing   { background: #1a2a4a; color: #7dd3fc; }
+    .badge-sm.pending      { background: #1e293b; color: #64748b; }
+
+    /* Inbox item status variants */
+    .inbox-item.needs-human  { border-left: 3px solid #fb923c !important; background: #1a1000; }
+    .inbox-item.needs-human:hover { background: #221500; }
+    .inbox-item.ai-handled   { border-left: 3px solid #22c55e; }
+    .inbox-item.processing   { opacity: 0.7; }
+
+    /* Human-escalation banner inside thread */
+    .escalation-banner {
+      display: flex; align-items: flex-start; gap: 12px;
+      background: #1c0d00; border: 1px solid #92400e;
+      border-radius: 12px; padding: 14px 16px;
+      flex-shrink: 0;
+    }
+    .escalation-icon { font-size: 20px; flex-shrink: 0; line-height: 1; }
+    .escalation-body { flex: 1; }
+    .escalation-title { font-size: 13px; font-weight: 700; color: #fb923c; margin-bottom: 3px; }
+    .escalation-reason { font-size: 12px; color: #a16207; line-height: 1.5; }
+    .escalation-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+    /* AI-handled banner */
+    .handled-banner {
+      display: flex; align-items: center; gap: 10px;
+      background: #0a1f0a; border: 1px solid #14532d;
+      border-radius: 12px; padding: 10px 14px;
+      flex-shrink: 0;
+    }
+    .handled-banner .icon { font-size: 16px; }
+    .handled-banner span  { font-size: 12px; color: #4ade80; }
+
+    .inbox-empty { padding: 48px 18px; text-align: center; color: #334155; font-size: 13px; line-height: 1.9; }
+
+    /* ── Thread view ── */
+    .thread-main {
+      flex: 1 1 0;
+      min-height: 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: #0d1424;
+      /* No overflow:hidden here — it clips the scrollbar of thread-messages */
+    }
+    .thread-empty {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: #1e2d45; gap: 14px;
+    }
+    .thread-empty .icon { font-size: 52px; }
+    .thread-empty p { font-size: 14px; color: #2a3a56; }
+
+    .thread-header {
+      padding: 13px 20px;
+      background: #111827;
+      border-bottom: 1px solid #1e293b;
+      display: flex; align-items: flex-start; justify-content: space-between;
+      flex-shrink: 0; gap: 14px;
+    }
+    .thread-subject { font-size: 15px; font-weight: 600; color: #f1f5f9; margin-bottom: 3px; }
+    .thread-meta { font-size: 12px; color: #64748b; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .thread-actions { display: flex; gap: 7px; flex-shrink: 0; }
+
+    .thread-messages {
+      /* height:0 + flex-grow:1 is the most reliable way to get a scrollable flex child.
+         flex-basis:0 (via flex:1 1 0) starts the element at 0 height so min-height:auto
+         never interferes, then flex-grow fills the remaining space. */
+      flex: 1 1 0;
+      height: 0;           /* combined with flex-grow:1 this forces correct sizing */
+      min-height: 0;
+      overflow-y: scroll;  /* scroll instead of auto — always shows scrollbar,
+                              avoids browsers miscalculating whether to show it */
+      overflow-x: hidden;
+      padding: 18px 20px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .thread-messages::-webkit-scrollbar { width: 7px; }
+    .thread-messages::-webkit-scrollbar-track { background: #0a0f1e; }
+    .thread-messages::-webkit-scrollbar-thumb { background: #2a3f5a; border-radius: 10px; }
+    .thread-messages::-webkit-scrollbar-thumb:hover { background: #38bdf8; }
+
+    /* Email cards */
+    .email-card {
+      background: #111827; border: 1px solid #1e293b; border-radius: 12px;
+      overflow: hidden;
+      flex-shrink: 0;   /* card always shows full content — thread-messages scrolls around it */
+    }
+    .email-card-header {
+      padding: 10px 15px; border-bottom: 1px solid #1e293b;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .email-avatar { width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; color: #fff; }
+    .email-avatar.ai-av { background: #1d4ed8; }
+    .email-from { flex: 1; min-width: 0; }
+    .email-from-name { font-size: 13px; font-weight: 600; color: #e2e8f0; }
+    .email-from-addr { font-size: 11px; color: #475569; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .email-card-time { font-size: 11px; color: #475569; flex-shrink: 0; }
+    .email-body {
+      padding: 13px 15px;
+      font-size: 14px;
+      line-height: 1.8;
+      color: #bfcfdf;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;   /* handles very long unbroken strings */
+    }
+    .email-subject-line { font-size: 11px; color: #475569; padding: 5px 15px 0; border-top: 1px solid #1e293b; font-style: italic; }
+
+    /* AI reply card */
+    .ai-reply-card {
+      background: #0b1828; border: 1px solid #1a3050; border-radius: 12px;
+      overflow: visible;   /* don't clip the body content */
+      margin-left: 30px;
+      flex-shrink: 0;      /* never compress AI reply cards */
+    }
+    .ai-reply-card .email-card-header { background: #091420; border-bottom-color: #1a3050; border-radius: 12px 12px 0 0; overflow: hidden; }
+    .ai-reply-card .email-body { color: #7a9ab8; }
+
+    .context-snippet {
+      margin-top: 10px; padding: 8px 11px;
+      background: #050c18; border-left: 3px solid #38bdf8; border-radius: 6px;
+      font-size: 11px; color: #4a6a8a;
+    }
+    .context-snippet strong { color: #38bdf8; display: block; margin-bottom: 2px; }
+
+    /* Typing indicator */
+    .ai-loading { display: flex; align-items: center; gap: 10px; padding: 14px 15px; color: #64748b; font-size: 13px; }
+    .dot-flashing { display: flex; gap: 4px; }
+    .dot-flashing span { width: 6px; height: 6px; background: #38bdf8; border-radius: 50%; animation: bounce 1.2s infinite; }
+    .dot-flashing span:nth-child(2) { animation-delay: 0.2s; }
+    .dot-flashing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
+
+    /* Compose bar — flex-shrink:0 so it never shrinks, but max-height stops it
+       from growing so tall it pushes thread-messages off screen */
+    .compose-bar {
+      flex-shrink: 0;
+      padding: 10px 20px;
+      background: #111827;
+      border-top: 1px solid #1e293b;
+      max-height: 200px;
+    }
+    .compose-inner { background: #1a2540; border: 1px solid #1e3a5f; border-radius: 12px; overflow: hidden; transition: border-color 0.2s; }
+    .compose-inner:focus-within { border-color: #38bdf8; }
+    .compose-label { padding: 6px 13px 0; font-size: 11px; color: #3a5070; text-transform: uppercase; letter-spacing: 0.6px; }
+    .compose-textarea {
+      width: 100%; padding: 6px 13px 8px;
+      background: transparent; border: none;
+      color: #e2e8f0; font-size: 14px; font-family: inherit;
+      resize: none; outline: none;
+      min-height: 50px; max-height: 90px;
+      overflow-y: auto;   /* scroll inside the textarea, not expand the bar */
+    }
+    .compose-textarea::placeholder { color: #2d4060; }
+    .compose-actions { padding: 7px 13px; border-top: 1px solid #1e3a5f; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .compose-hint { font-size: 11px; color: #2d4060; }
+    .compose-btns { display: flex; gap: 7px; }
+
+    .btn { padding: 7px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .btn-secondary { background: #1e293b; border: 1px solid #334155; color: #94a3b8; }
+    .btn-secondary:hover { background: #334155; color: #e2e8f0; }
+    .btn-ai { background: #4f46e5; color: #fff; }
+    .btn-ai:hover { background: #4338ca; }
+    .btn-ai:disabled { background: #2d2d6b; color: #6b6b9a; cursor: not-allowed; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-primary:disabled { background: #1e2d4a; color: #475569; cursor: not-allowed; }
+    .btn-send-email { background: #0d7a4a; color: #fff; }
+    .btn-send-email:hover { background: #0a6040; }
+    .btn-send-email:disabled { background: #1a3a2a; color: #3a6050; cursor: not-allowed; }
+
+    /* ── Email Settings Modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(3px);
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: #111827; border: 1px solid #1e293b; border-radius: 16px;
+      width: 480px; max-width: 95vw; max-height: 90vh; overflow-y: auto;
+      box-shadow: 0 25px 60px rgba(0,0,0,0.5);
+    }
+    .modal-header { padding: 18px 22px; border-bottom: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; }
+    .modal-header h2 { font-size: 16px; color: #f1f5f9; }
+    .modal-close { background: none; border: none; color: #64748b; font-size: 20px; cursor: pointer; padding: 2px 6px; border-radius: 6px; transition: all 0.2s; }
+    .modal-close:hover { background: #1e293b; color: #e2e8f0; }
+    .modal-body { padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; }
+    .modal-footer { padding: 14px 22px; border-top: 1px solid #1e293b; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .form-group label { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .form-group input {
+      padding: 9px 12px; background: #1e293b; border: 1px solid #334155;
+      border-radius: 8px; color: #e2e8f0; font-size: 13px; outline: none;
+      transition: border-color 0.2s;
+    }
+    .form-group input:focus { border-color: #38bdf8; }
+    .form-group input::placeholder { color: #475569; }
+    .form-row { display: grid; grid-template-columns: 1fr 90px; gap: 10px; }
+    .form-hint { font-size: 11px; color: #475569; line-height: 1.5; }
+    .form-hint a { color: #38bdf8; text-decoration: none; }
+    .provider-presets { display: flex; gap: 7px; flex-wrap: wrap; }
+    .preset-btn {
+      padding: 5px 12px; background: #1e293b; border: 1px solid #334155;
+      border-radius: 8px; color: #94a3b8; font-size: 12px; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .preset-btn:hover { background: #334155; color: #e2e8f0; border-color: #38bdf8; }
+    .form-divider { border: none; border-top: 1px solid #1e293b; margin: 2px 0; }
+    .section-label { font-size: 11px; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; }
+    .connect-status { font-size: 13px; color: #64748b; }
+    .connect-status.ok  { color: #4ade80; }
+    .connect-status.err { color: #f87171; }
+
+    /* ── Dashboard ── */
+    #panel-dashboard { flex-direction: column; padding: 22px; overflow-y: auto; gap: 18px; min-height: 0; }
+    .dash-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 13px; margin-bottom: 18px; }
+    .dash-card { background: #111827; border: 1px solid #1e293b; border-radius: 14px; padding: 17px; }
+    .dash-card h3 { font-size: 11px; color: #64748b; margin-bottom: 7px; text-transform: uppercase; letter-spacing: 0.8px; }
+    .dash-card .big-num { font-size: 38px; font-weight: 800; }
+    .dash-card .sub { font-size: 11px; color: #475569; margin-top: 3px; }
+    .dash-card.blue .big-num { color: #38bdf8; }
+    .dash-card.green .big-num { color: #4ade80; }
+    .dash-card.red .big-num { color: #f87171; }
+    .records-table-wrap { background: #111827; border: 1px solid #1e293b; border-radius: 14px; overflow: hidden; }
+    .records-table-wrap h3 { padding: 12px 17px; font-size: 14px; border-bottom: 1px solid #1e293b; color: #94a3b8; display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { padding: 9px 14px; text-align: left; color: #475569; font-weight: 600; background: #0f172a; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+    tbody tr { border-top: 1px solid #1e293b; transition: background 0.15s; }
+    tbody tr:hover { background: #1e293b; }
+    tbody td { padding: 9px 14px; color: #cbd5e1; vertical-align: top; }
+    .text-cell { max-width: 260px; word-break: break-word; }
+    .badge { display: inline-block; padding: 2px 9px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+    .badge.POSITIVE { background: #14532d; color: #4ade80; }
+    .badge.NEGATIVE { background: #450a0a; color: #f87171; }
+    .btn-refresh { padding: 5px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 7px; color: #94a3b8; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+    .btn-refresh:hover { background: #334155; color: #e2e8f0; }
+
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Email Config Modal ── -->
+<div class="modal-overlay" id="emailModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>&#9993; Email Account Settings</h2>
+      <button class="modal-close" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Quick Setup</label>
+        <div class="provider-presets">
+          <button class="preset-btn" onclick="applyPreset('gmail')">Gmail</button>
+          <button class="preset-btn" onclick="applyPreset('outlook')">Outlook</button>
+          <button class="preset-btn" onclick="applyPreset('yahoo')">Yahoo</button>
+        </div>
+      </div>
+
+      <hr class="form-divider"/>
+      <div class="section-label">Account</div>
+
+      <div class="form-group">
+        <label>Email Address</label>
+        <input id="cfgEmail" type="email" placeholder="you@gmail.com" />
+      </div>
+      <div class="form-group">
+        <label>Password / App Password</label>
+        <input id="cfgPass" type="password" placeholder="App password recommended" />
+        <div class="form-hint">
+          For Gmail, create an App Password at
+          <a href="#" onclick="return false">myaccount.google.com → Security → App passwords</a>
+          (requires 2FA enabled).
+        </div>
+      </div>
+
+      <hr class="form-divider"/>
+      <div class="section-label">Incoming Mail (IMAP)</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>IMAP Host</label>
+          <input id="cfgImapHost" placeholder="imap.gmail.com" />
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input id="cfgImapPort" type="number" value="993" />
+        </div>
+      </div>
+
+      <hr class="form-divider"/>
+      <div class="section-label">Outgoing Mail (SMTP)</div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>SMTP Host</label>
+          <input id="cfgSmtpHost" placeholder="smtp.gmail.com" />
+        </div>
+        <div class="form-group">
+          <label>Port</label>
+          <input id="cfgSmtpPort" type="number" value="587" />
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <span class="connect-status" id="connectStatus">Not connected</span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="connectBtn" onclick="connectEmail()">&#9889; Connect</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">ICAP Support <span>AI</span></div>
+  <div class="header-center">
+    <div class="email-pill disconnected" id="emailPill">
+      <div class="dot"></div>
+      <span id="emailPillText">No email connected</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="live-pill" id="livePill" onclick="togglePolling()" title="Click to pause/resume auto-refresh">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="liveText">LIVE</span>
+    </div>
+    <div class="status">
+      <div class="status-dot" id="statusDot" style="background:#ef4444;box-shadow:0 0 5px #ef4444"></div>
+      <span id="statusText">Checking...</span>
+    </div>
+    <button class="btn-icon" onclick="openModal()" title="Email Settings">&#9881;</button>
+  </div>
+</header>
+
+<!-- ── Tabs ── -->
+<div class="tabs">
+  <div class="tab active" data-tab="inbox" onclick="switchTab('inbox')">&#9993; Inbox</div>
+  <div class="tab" data-tab="dashboard" onclick="switchTab('dashboard')">&#128202; Dashboard</div>
+</div>
+
+<!-- ── INBOX PANEL ── -->
+<div id="panel-inbox" class="panel active">
+
+  <div class="inbox-sidebar">
+    <div class="inbox-toolbar">
+      <input class="inbox-search" id="inboxSearch" placeholder="&#128269; Search..." oninput="filterInbox()" />
+      <button class="btn-toolbar highlight" id="syncBtn" onclick="syncEmails()" title="Sync emails" style="display:none">&#8595; Sync</button>
+      <button class="btn-toolbar" onclick="loadSessionChats()" title="Refresh chats">&#8635;</button>
+    </div>
+    <div class="inbox-filter">
+      <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+      <button class="filter-btn" onclick="setFilter('email',this)">&#9993; Emails</button>
+      <button class="filter-btn" onclick="setFilter('chat',this)">&#128172; Chats</button>
+      <button class="filter-btn" onclick="setFilter('NEGATIVE',this)">&#128308; Negative</button>
+      <button class="filter-btn" onclick="setFilter('needs-human',this)">&#9888; Needs Human</button>
+    </div>
+    <div class="inbox-count" id="inboxCount">Loading...</div>
+    <div class="inbox-list" id="inboxList">
+      <div class="inbox-empty">Loading...</div>
+    </div>
+  </div>
+
+  <div class="thread-main" id="threadMain">
+    <div class="thread-empty">
+      <div class="icon">&#9993;</div>
+      <p>Select a conversation to view</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── DASHBOARD PANEL ── -->
+<div id="panel-dashboard" class="panel">
+  <div class="dash-grid">
+    <div class="dash-card blue">
+      <h3>Total Sessions</h3>
+      <div class="big-num" id="dashTotal">—</div>
+      <div class="sub">Unique conversations</div>
+    </div>
+    <div class="dash-card green">
+      <h3>Positive</h3>
+      <div class="big-num" id="dashPos">—</div>
+      <div class="sub">Positive sentiment</div>
+    </div>
+    <div class="dash-card red">
+      <h3>Negative</h3>
+      <div class="big-num" id="dashNeg">—</div>
+      <div class="sub">Negative sentiment</div>
+    </div>
+  </div>
+  <div class="records-table-wrap">
+    <h3>
+      All Records
+      <button class="btn-refresh" onclick="loadDashboard()">&#8635; Refresh</button>
+    </h3>
+    <table>
+      <thead>
+        <tr><th>#</th><th>Source</th><th>Message</th><th>Sentiment</th><th>Confidence</th></tr>
+      </thead>
+      <tbody id="recordsBody">
+        <tr><td colspan="5" style="text-align:center;padding:28px;color:#475569">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const BASE = "http://127.0.0.1:8000";
+  const COLORS = ['#7c3aed','#2563eb','#0891b2','#059669','#d97706','#be185d','#0d9488','#b45309'];
+
+  function avatarColor(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
+    return COLORS[Math.abs(h) % COLORS.length];
+  }
+  function esc(s) {
+    return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function nowTime() { return new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }
+
+  // ── Backend health ──
+  async function checkBackend() {
+    const dot = document.getElementById('statusDot');
+    const txt = document.getElementById('statusText');
+    try {
+      const r = await fetch(`${BASE}/`, { signal: AbortSignal.timeout(4000) });
+      if (r.ok) {
+        dot.style.cssText = 'background:#22c55e;box-shadow:0 0 5px #22c55e';
+        txt.textContent = 'Backend Online';
+      } else throw 0;
+    } catch {
+      dot.style.cssText = 'background:#ef4444;box-shadow:0 0 5px #ef4444';
+      txt.textContent = 'Backend Offline';
+    }
+  }
+
+  // ── Email connection status ──
+  async function checkEmailStatus() {
+    try {
+      const r = await fetch(`${BASE}/email/status`, { signal: AbortSignal.timeout(5000) });
+      const d = await r.json();
+      const pill = document.getElementById('emailPill');
+      const pillText = document.getElementById('emailPillText');
+      const syncBtn = document.getElementById('syncBtn');
+      if (d.connected) {
+        pill.className = 'email-pill';
+        pillText.textContent = `${d.email}  (${d.unread} unread)`;
+        syncBtn.style.display = '';
+      } else {
+        pill.className = 'email-pill disconnected';
+        pillText.textContent = 'No email connected';
+        syncBtn.style.display = 'none';
+      }
+    } catch {}
+  }
+
+  // ── Tab ──
+  function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('panel-' + name).classList.add('active');
+    if (name === 'dashboard') loadDashboard();
+  }
+
+  // ── State ──
+  let allItems     = [];   // { type:'email'|'chat', id, from, subject, preview, sentiment, date, raw }
+  let activeId     = null;
+  let activeType   = null;
+  let aiReplies    = {};   // id -> [{response, context_used, time}]
+  let currentFilter = 'all';
+  let fetchedEmails = [];  // raw email objects from /email/fetch
+
+  // ── Filter ──
+  function setFilter(f, btn) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    renderInboxList(getFiltered());
+  }
+  function getFiltered() {
+    if (currentFilter === 'all')         return allItems;
+    if (currentFilter === 'email')       return allItems.filter(i => i.type === 'email');
+    if (currentFilter === 'chat')        return allItems.filter(i => i.type === 'chat');
+    if (currentFilter === 'needs-human') return allItems.filter(i => i.status === 'needs-human');
+    return allItems.filter(i => i.sentiment === currentFilter);
+  }
+
+  // ── Load session chats from /records ──
+  async function loadSessionChats() {
+    try {
+      const r = await fetch(`${BASE}/records`, { signal: AbortSignal.timeout(5000) });
+      if (!r.ok) throw 0;
+      const data = await r.json();
+
+      const map = new Map();
+      for (const rec of (data.data || [])) {
+        const sid = rec.session_id || 'default';
+        if (sid.startsWith('email-')) continue; // skip email sessions in chat list
+        if (!map.has(sid)) map.set(sid, []);
+        map.get(sid).push(rec);
+      }
+
+      const chatItems = Array.from(map.entries()).map(([sid, msgs]) => {
+        const sents = msgs.map(m => m.sentiment);
+        const sentiment = sents.includes('NEGATIVE') ? 'NEGATIVE'
+                        : sents.includes('POSITIVE') ? 'POSITIVE' : 'NEUTRAL';
+        const last = msgs[msgs.length - 1];
+        return {
+          type: 'chat', id: sid,
+          from: `Customer #${sid.slice(0,8)}`,
+          subject: '',
+          preview: last?.text?.slice(0, 60) || '',
+          sentiment, date: '',
+          msgCount: msgs.length,
+          messages: msgs,
+          raw: null,
+        };
+      });
+
+      // Merge: keep emails, replace chats
+      allItems = [...allItems.filter(i => i.type === 'email'), ...chatItems].reverse();
+      renderInboxList(getFiltered());
+    } catch {
+      document.getElementById('inboxList').innerHTML =
+        '<div class="inbox-empty">Could not load chats. Is the backend running?</div>';
+    }
+  }
+
+  // ── Sync emails — headers only (fast, one IMAP round trip) ──
+  async function syncEmails() {
+    const btn = document.getElementById('syncBtn');
+    btn.textContent = '⏳ Syncing...';
+    btn.disabled = true;
+    try {
+      // No timeout on AbortSignal so slow connections still work;
+      // the backend header fetch is one IMAP call and should finish in ~3s.
+      const r = await fetch(`${BASE}/email/fetch?limit=20`);
+      const d = await r.json();
+      if (d.status === 'error') { showToast('Sync failed: ' + d.message, true); return; }
+
+      fetchedEmails = d.emails || [];
+
+      const emailItems = fetchedEmails.map(e => ({
+        type: 'email',
+        id: 'email-' + e.id,
+        from: e.from_addr,
+        subject: e.subject,
+        // body is null here — loaded on demand when email is opened
+        preview: e.subject || '(no subject)',
+        sentiment: 'NEUTRAL',
+        date: e.date,
+        msgCount: 1,
+        raw: e,        // body field will be null until openEmailThread fetches it
+      }));
+
+      allItems = [...emailItems, ...allItems.filter(i => i.type === 'chat')];
+      renderInboxList(getFiltered());
+      checkEmailStatus();
+      showToast(`Synced ${emailItems.length} email${emailItems.length !== 1 ? 's' : ''}`);
+    } catch (err) {
+      showToast('Sync failed: ' + err.message, true);
+    } finally {
+      btn.textContent = '↓ Sync';
+      btn.disabled = false;
+    }
+  }
+
+  // ── Render inbox list ──
+  function renderInboxList(items) {
+    const list  = document.getElementById('inboxList');
+    const count = document.getElementById('inboxCount');
+
+    if (!items.length) {
+      list.innerHTML = '<div class="inbox-empty">No conversations found.<br>Connect your email or send a chat message.</div>';
+      count.textContent = '0 items';
+      return;
+    }
+
+    count.textContent = `${items.length} conversation${items.length !== 1 ? 's' : ''}`;
+
+    list.innerHTML = items.map(item => {
+      const isEmail   = item.type === 'email';
+      const label     = isEmail ? item.from.replace(/<.*>/, '').trim() || item.from : item.from;
+      const initial   = label[0]?.toUpperCase() || '?';
+      const color     = avatarColor(item.id);
+      const isActive  = item.id === activeId;
+      const statusCls = item.status ? ` ${item.status}` : '';
+
+      const STATUS_LABEL = {
+        'ai-handled':    '&#10003; AI Handled',
+        'needs-human':   '&#9888; Needs Human',
+        'processing':    '&#8987; Processing',
+        'human-handling':'&#128100; Human Handling',
+      };
+      const statusBadge = item.status && STATUS_LABEL[item.status]
+        ? `<span class="badge-sm ${item.status}">${STATUS_LABEL[item.status]}</span>` : '';
+
+      return `
+        <div class="inbox-item${isActive ? ' active' : ''}${statusCls}"
+             onclick="openItem('${esc(item.id)}')"
+             data-id="${esc(item.id)}">
+          <div class="inbox-avatar" style="background:${color}">${esc(initial)}</div>
+          <div class="inbox-item-body">
+            <div class="inbox-item-header">
+              <div class="inbox-item-name">${esc(label)}</div>
+              <div class="inbox-item-time">${isEmail ? '&#9993;' : item.msgCount + ' msg'}</div>
+            </div>
+            ${isEmail ? `<div class="inbox-item-subject">${esc(item.subject)}</div>` : ''}
+            <div class="inbox-item-preview">${esc(item.preview)}</div>
+            <div class="inbox-item-footer">
+              <span class="badge-sm ${item.type}">${isEmail ? 'EMAIL' : 'CHAT'}</span>
+              <span class="badge-sm ${item.sentiment}">${item.sentiment}</span>
+              ${statusBadge}
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function filterInbox() {
+    const q = document.getElementById('inboxSearch').value.toLowerCase();
+    const filtered = getFiltered().filter(i =>
+      i.from.toLowerCase().includes(q) ||
+      (i.subject || '').toLowerCase().includes(q) ||
+      (i.preview || '').toLowerCase().includes(q)
+    );
+    renderInboxList(filtered);
+  }
+
+  // ── Open an item ──
+  function openItem(id) {
+    const item = allItems.find(i => i.id === id);
+    if (!item) return;
+    activeId   = id;
+    activeType = item.type;
+
+    document.querySelectorAll('.inbox-item').forEach(el =>
+      el.classList.toggle('active', el.dataset.id === id));
+
+    if (item.type === 'email') openEmailThread(item);
+    else openChatThread(item);
+  }
+
+  // ── Email thread — renders shell immediately, loads body async ──
+  async function openEmailThread(item) {
+    const e       = item.raw;
+    const color   = avatarColor(item.id);
+    const senderLabel = e.from_addr.replace(/<.*>/, '').trim() || e.from_addr;
+    const initial = senderLabel[0]?.toUpperCase() || 'E';
+    const replies = aiReplies[item.id] || [];
+
+    document.getElementById('threadMain').innerHTML = `
+      <div class="thread-header">
+        <div style="flex:1;min-width:0">
+          <div class="thread-subject">${esc(e.subject || '(No Subject)')}</div>
+          <div class="thread-meta">
+            <span>From: ${esc(e.from_addr)}</span>
+            <span>&#128197; ${esc(e.date)}</span>
+            <span class="badge-sm email">EMAIL</span>
+            ${item.status ? `<span class="badge-sm ${item.status}">${{
+              'ai-handled':'&#10003; AI Handled','needs-human':'&#9888; Needs Human',
+              'processing':'&#8987; Processing','human-handling':'&#128100; Human Handling'
+            }[item.status]||''}</span>` : ''}
+          </div>
+        </div>
+        <div class="thread-actions">
+          ${!item.status || item.status === 'pending'
+            ? `<button class="btn btn-ai" style="font-size:12px" onclick="autoProcessItem(allItems.find(i=>i.id==='${esc(item.id)}'))">&#9889; Auto-Process</button>`
+            : ''}
+        </div>
+      </div>
+
+      <div class="thread-messages" id="threadMessages">
+        ${renderStatusBanner(item)}
+        <div class="email-card">
+          <div class="email-card-header">
+            <div class="email-avatar" style="background:${color}">${esc(initial)}</div>
+            <div class="email-from">
+              <div class="email-from-name">${esc(senderLabel)}</div>
+              <div class="email-from-addr">${esc(e.from_addr)}</div>
+            </div>
+            <div class="email-card-time">${esc(e.date)}</div>
+          </div>
+          <div class="email-subject-line">Subject: ${esc(e.subject)}</div>
+          <div class="email-body" id="emailBodyEl">
+            ${e.body != null
+              ? esc(e.body)
+              : '<span style="color:#475569;font-style:italic">Loading email body...</span>'}
+          </div>
+        </div>
+        ${replies.map(r => renderAiReply(r)).join('')}
+      </div>
+
+      <div class="compose-bar">
+        <div class="compose-inner">
+          <div class="compose-label">&#9997; Compose reply</div>
+          <textarea class="compose-textarea" id="composeText"
+            placeholder="Edit or write a reply... (Ctrl+Enter to send)"
+            onkeydown="if(event.key==='Enter'&&event.ctrlKey)sendEmailReply()"></textarea>
+          <div class="compose-actions">
+            <span class="compose-hint">Ctrl+Enter to send</span>
+            <div class="compose-btns">
+              <button class="btn btn-secondary" onclick="document.getElementById('composeText').value=''">Clear</button>
+              <button class="btn btn-ai" id="aiBtn" onclick="generateEmailReply()">&#9889; AI Draft</button>
+              <button class="btn btn-send-email" id="sendEmailBtn" onclick="sendEmailReply()">&#9993; Send Reply</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    scrollMsgs();
+
+    // If body not yet loaded, fetch it now (separate fast call)
+    if (e.body == null) {
+      try {
+        const emailSeqId = item.id.replace('email-', '');
+        const r = await fetch(`${BASE}/email/body/${emailSeqId}`);
+        const d = await r.json();
+        const bodyEl = document.getElementById('emailBodyEl');
+        if (bodyEl) {
+          if (d.status === 'ok') {
+            e.body = d.body;  // cache it on the item
+            bodyEl.textContent = d.body;
+          } else {
+            bodyEl.innerHTML = `<span style="color:#f87171">Failed to load body: ${esc(d.message)}</span>`;
+          }
+        }
+      } catch (err) {
+        const bodyEl = document.getElementById('emailBodyEl');
+        if (bodyEl) bodyEl.innerHTML = `<span style="color:#f87171">Network error loading body.</span>`;
+      }
+    }
+  }
+
+  // ── Chat thread ──
+  function openChatThread(item) {
+    const color   = avatarColor(item.id);
+    const shortId = item.id.length > 8 ? item.id.slice(0, 8) : item.id;
+    const replies = aiReplies[item.id] || [];
+
+    const msgsHtml = (item.messages || []).map(msg => {
+      const r = replies.find(x => x.queryId === msg.id);
+      return renderChatCard(msg, color, shortId) + (r ? renderAiReply(r) : '');
+    }).join('');
+
+    document.getElementById('threadMain').innerHTML = `
+      <div class="thread-header">
+        <div style="flex:1;min-width:0">
+          <div class="thread-subject">Chat: Customer #${esc(shortId)}</div>
+          <div class="thread-meta">
+            <span>${(item.messages||[]).length} messages</span>
+            <span class="badge-sm ${item.sentiment}">${item.sentiment}</span>
+            <span class="badge-sm chat">CHAT</span>
+            ${item.status ? `<span class="badge-sm ${item.status}">${{
+              'ai-handled':'&#10003; AI Handled','needs-human':'&#9888; Needs Human',
+              'processing':'&#8987; Processing','human-handling':'&#128100; Human Handling'
+            }[item.status]||''}</span>` : ''}
+          </div>
+        </div>
+        <div class="thread-actions">
+          ${!item.status || item.status === 'pending'
+            ? `<button class="btn btn-ai" style="font-size:12px" onclick="autoProcessItem(allItems.find(i=>i.id==='${esc(item.id)}'))">&#9889; Auto-Process</button>`
+            : ''}
+        </div>
+      </div>
+      <div class="thread-messages" id="threadMessages">${renderStatusBanner(item)}${msgsHtml}</div>
+      <div class="compose-bar">
+        <div class="compose-inner">
+          <div class="compose-label">&#9997; New customer message</div>
+          <textarea class="compose-textarea" id="composeText"
+            placeholder="Type customer message... (Ctrl+Enter to send + AI reply)"
+            onkeydown="if(event.key==='Enter'&&event.ctrlKey)sendChatAndReply()"></textarea>
+          <div class="compose-actions">
+            <span class="compose-hint">Ctrl+Enter to send &amp; get AI reply</span>
+            <div class="compose-btns">
+              <button class="btn btn-secondary" onclick="document.getElementById('composeText').value=''">Clear</button>
+              <button class="btn btn-ai" id="aiBtn" onclick="chatAiOnly()">&#9889; AI Reply Only</button>
+              <button class="btn btn-primary" id="sendBtn" onclick="sendChatAndReply()">&#9658; Send &amp; Reply</button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    scrollMsgs();
+  }
+
+  function renderChatCard(msg, color, shortId) {
+    const sent = msg.sentiment || 'NEUTRAL';
+    return `
+      <div class="email-card">
+        <div class="email-card-header">
+          <div class="email-avatar" style="background:${color}">${esc(shortId[0]?.toUpperCase()||'C')}</div>
+          <div class="email-from">
+            <div class="email-from-name">Customer #${esc(shortId)}</div>
+            <div class="email-from-addr">customer-${esc(shortId)}@session.icap</div>
+          </div>
+          <span class="badge-sm ${sent}">${sent}</span>
+          <div class="email-card-time">${(msg.confidence*100).toFixed(0)}% conf</div>
+        </div>
+        <div class="email-body">${esc(msg.text)}</div>
+      </div>`;
+  }
+
+  function renderAiReply(reply) {
+    const ctx = reply.context_used
+      ? `<div class="context-snippet"><strong>&#128196; Docs context used:</strong>${esc(reply.context_used.slice(0,200))}${reply.context_used.length>200?'…':''}</div>`
+      : '';
+    return `
+      <div class="ai-reply-card">
+        <div class="email-card-header">
+          <div class="email-avatar ai-av">AI</div>
+          <div class="email-from">
+            <div class="email-from-name">AI Assistant</div>
+            <div class="email-from-addr">ai-support@icap &nbsp;&#183;&nbsp; ${reply.send_status === 'sent' ? '&#10003; Sent to customer' : 'Draft'}</div>
+          </div>
+          <div class="email-card-time">${esc(reply.time||'')}</div>
+        </div>
+        <div class="email-body">${esc(reply.response)}${ctx}</div>
+      </div>`;
+  }
+
+  function renderAiLoading() {
+    return `<div class="ai-reply-card" id="aiLoadingCard">
+      <div class="email-card-header">
+        <div class="email-avatar ai-av">AI</div>
+        <div class="email-from">
+          <div class="email-from-name">AI Assistant</div>
+          <div class="email-from-addr">Reading docs &amp; generating reply...</div>
+        </div>
+      </div>
+      <div class="ai-loading">
+        <div class="dot-flashing"><span></span><span></span><span></span></div>
+        Generating via RAG + LLM...
+      </div>
+    </div>`;
+  }
+
+  function scrollMsgs() {
+    const m = document.getElementById('threadMessages');
+    if (!m) return;
+    // Two rAF calls ensure the browser has finished layout before we measure scrollHeight
+    requestAnimationFrame(() => requestAnimationFrame(() => { m.scrollTop = m.scrollHeight; }));
+  }
+
+  function setBtns(disabled) {
+    ['aiBtn','sendBtn','sendEmailBtn'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.disabled = disabled;
+    });
+  }
+
+  // ── Generate AI draft for email (no send) ──
+  async function generateEmailReply() {
+    const item = allItems.find(i => i.id === activeId);
+    if (!item?.raw) return;
+    setBtns(true);
+
+    // If body isn't loaded yet, fetch it first
+    if (item.raw.body == null) {
+      try {
+        const emailSeqId = item.id.replace('email-', '');
+        const br = await fetch(`${BASE}/email/body/${emailSeqId}`);
+        const bd = await br.json();
+        if (bd.status === 'ok') item.raw.body = bd.body;
+      } catch {}
+    }
+
+    const msgs = document.getElementById('threadMessages');
+    if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiLoading()); scrollMsgs(); }
+
+    try {
+      const res = await fetch(`${BASE}/email/auto-reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          body:       item.raw.body || '',
+          from_addr:  item.raw.from_addr,
+          subject:    item.raw.subject,
+          message_id: item.raw.message_id,
+          send:       false,
+        })
+      });
+      const d = await res.json();
+      document.getElementById('aiLoadingCard')?.remove();
+
+      const reply = { response: d.response, context_used: d.context_used, time: nowTime(), send_status: 'draft' };
+      if (!aiReplies[activeId]) aiReplies[activeId] = [];
+      aiReplies[activeId].push(reply);
+
+      if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiReply(reply)); scrollMsgs(); }
+
+      // Pre-fill compose area
+      const ta = document.getElementById('composeText');
+      if (ta) ta.value = d.response;
+    } catch {
+      document.getElementById('aiLoadingCard')?.remove();
+    }
+    setBtns(false);
+  }
+
+  // ── Send email reply via SMTP ──
+  async function sendEmailReply() {
+    const item = allItems.find(i => i.id === activeId);
+    if (!item?.raw) { showToast('No email selected.', true); return; }
+
+    const replyBody = document.getElementById('composeText')?.value.trim();
+    if (!replyBody) { showToast('Reply is empty — write something first.', true); return; }
+
+    const toAddr = item.raw.from_addr;
+    if (!toAddr) { showToast('Could not determine recipient address.', true); return; }
+
+    setBtns(true);
+    const sendBtn = document.getElementById('sendEmailBtn');
+    if (sendBtn) sendBtn.textContent = '⏳ Sending...';
+
+    try {
+      const res = await fetch(`${BASE}/email/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to:         toAddr,
+          subject:    item.raw.subject || '',
+          body:       replyBody,
+          message_id: item.raw.message_id || '',
+        })
+      });
+      const d = await res.json();
+
+      if (d.status === 'sent') {
+        const msgs = document.getElementById('threadMessages');
+        const reply = { response: replyBody, context_used: '', time: nowTime(), send_status: 'sent' };
+        if (!aiReplies[activeId]) aiReplies[activeId] = [];
+        aiReplies[activeId].push(reply);
+        if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiReply(reply)); scrollMsgs(); }
+        document.getElementById('composeText').value = '';
+        showToast('Reply sent to ' + toAddr);
+      } else {
+        // Show the actual SMTP error from the backend
+        showToast('Send failed: ' + (d.message || 'Unknown SMTP error'), true);
+        console.error('SMTP error detail:', d);
+      }
+    } catch (err) {
+      showToast('Network error: ' + err.message, true);
+    }
+
+    setBtns(false);
+    if (sendBtn) sendBtn.textContent = '✉ Send Reply';
+  }
+
+  // ── Chat: send + AI reply ──
+  async function sendChatAndReply() {
+    const text = document.getElementById('composeText')?.value.trim();
+    if (!text || !activeId) return;
+    setBtns(true);
+
+    const item = allItems.find(i => i.id === activeId);
+    try {
+      const ar = await fetch(`${BASE}/analyze`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, session_id: activeId })
+      });
+      const analyzed = await ar.json();
+      const newMsg = { id: Date.now(), text, sentiment: analyzed.sentiment||'NEUTRAL', confidence: analyzed.confidence||0 };
+      if (item) item.messages = [...(item.messages||[]), newMsg];
+      document.getElementById('composeText').value = '';
+      openChatThread(item);
+      await chatFetchAi(text, newMsg.id);
+      loadSessionChats();
+    } catch { setBtns(false); }
+  }
+
+  async function chatAiOnly() {
+    const text = document.getElementById('composeText')?.value.trim();
+    if (!text || !activeId) return;
+    setBtns(true);
+    const msgs = document.getElementById('threadMessages');
+    if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiLoading()); scrollMsgs(); }
+    try {
+      const res = await fetch(`${BASE}/rag`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, session_id: activeId })
+      });
+      const d = await res.json();
+      document.getElementById('aiLoadingCard')?.remove();
+      const reply = { queryId: null, response: d.response, context_used: d.context_used, time: nowTime(), send_status:'draft' };
+      if (!aiReplies[activeId]) aiReplies[activeId] = [];
+      aiReplies[activeId].push(reply);
+      if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiReply(reply)); scrollMsgs(); }
+    } catch { document.getElementById('aiLoadingCard')?.remove(); }
+    setBtns(false);
+  }
+
+  async function chatFetchAi(text, msgId) {
+    const msgs = document.getElementById('threadMessages');
+    if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiLoading()); scrollMsgs(); }
+    try {
+      const res = await fetch(`${BASE}/rag`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, session_id: activeId })
+      });
+      const d = await res.json();
+      document.getElementById('aiLoadingCard')?.remove();
+      if (!aiReplies[activeId]) aiReplies[activeId] = [];
+      const reply = { queryId: msgId, response: d.response, context_used: d.context_used, time: nowTime(), send_status:'draft' };
+      aiReplies[activeId].push(reply);
+      if (msgs) { msgs.insertAdjacentHTML('beforeend', renderAiReply(reply)); scrollMsgs(); }
+    } catch { document.getElementById('aiLoadingCard')?.remove(); }
+    setBtns(false);
+  }
+
+  // ── Dashboard ──
+  async function loadDashboard() {
+    const tbody = document.getElementById('recordsBody');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:28px;color:#475569">Loading...</td></tr>';
+    try {
+      const [sr, rr] = await Promise.all([
+        fetch(`${BASE}/stats`,   { signal: AbortSignal.timeout(5000) }),
+        fetch(`${BASE}/records`, { signal: AbortSignal.timeout(5000) })
+      ]);
+      const stats = await sr.json(); const records = await rr.json();
+      document.getElementById('dashTotal').textContent = stats.total;
+      document.getElementById('dashPos').textContent   = stats.positive;
+      document.getElementById('dashNeg').textContent   = stats.negative;
+      if (!records.data?.length) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:28px;color:#475569">No records yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = records.data.map(r => `<tr>
+        <td>${r.id}</td>
+        <td style="font-size:11px;color:#64748b;font-family:monospace">${esc((r.session_id||'').startsWith('email-') ? '✉ email' : (r.session_id||'default').slice(0,8))}</td>
+        <td class="text-cell">${esc(r.text)}</td>
+        <td><span class="badge ${esc(r.sentiment)}">${esc(r.sentiment)}</span></td>
+        <td>${(r.confidence*100).toFixed(1)}%</td>
+      </tr>`).join('');
+    } catch {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:28px;color:#f87171">Could not load records.</td></tr>';
+    }
+  }
+
+  // ── Email settings modal ──
+  const PRESETS = {
+    gmail:   { imap_host:'imap.gmail.com',          imap_port:993, smtp_host:'smtp.gmail.com',          smtp_port:587 },
+    outlook: { imap_host:'imap-mail.outlook.com',   imap_port:993, smtp_host:'smtp-mail.outlook.com',   smtp_port:587 },
+    yahoo:   { imap_host:'imap.mail.yahoo.com',     imap_port:993, smtp_host:'smtp.mail.yahoo.com',     smtp_port:587 },
+  };
+  function applyPreset(name) {
+    const p = PRESETS[name]; if (!p) return;
+    document.getElementById('cfgImapHost').value = p.imap_host;
+    document.getElementById('cfgImapPort').value = p.imap_port;
+    document.getElementById('cfgSmtpHost').value = p.smtp_host;
+    document.getElementById('cfgSmtpPort').value = p.smtp_port;
+  }
+  function openModal()  { document.getElementById('emailModal').classList.add('open'); }
+  function closeModal() { document.getElementById('emailModal').classList.remove('open'); }
+
+  async function connectEmail() {
+    const status = document.getElementById('connectStatus');
+    const btn    = document.getElementById('connectBtn');
+    status.textContent = 'Connecting...'; status.className = 'connect-status';
+    btn.disabled = true;
+
+    const cfg = {
+      email:     document.getElementById('cfgEmail').value.trim(),
+      password:  document.getElementById('cfgPass').value,
+      imap_host: document.getElementById('cfgImapHost').value.trim(),
+      imap_port: document.getElementById('cfgImapPort').value,
+      smtp_host: document.getElementById('cfgSmtpHost').value.trim(),
+      smtp_port: document.getElementById('cfgSmtpPort').value,
+    };
+
+    try {
+      const r = await fetch(`${BASE}/email/connect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+      const d = await r.json();
+      if (d.status === 'connected') {
+        status.textContent = `&#10003; Connected — ${d.unread} unread`;
+        status.className   = 'connect-status ok';
+        setTimeout(closeModal, 1200);
+        checkEmailStatus();
+        document.getElementById('syncBtn').style.display = '';
+      } else {
+        status.textContent = '&#10007; ' + (d.message || 'Connection failed');
+        status.className   = 'connect-status err';
+      }
+    } catch (e) {
+      status.textContent = '&#10007; ' + e.message;
+      status.className   = 'connect-status err';
+    }
+    btn.disabled = false;
+  }
+
+  // ── Toast ──
+  function showToast(msg, isError = false) {
+    let t = document.getElementById('toast');
+    if (!t) {
+      t = document.createElement('div'); t.id = 'toast';
+      t.style.cssText = 'position:fixed;bottom:24px;right:24px;z-index:9999;padding:11px 18px;border-radius:10px;font-size:13px;font-weight:600;transition:opacity 0.3s';
+      document.body.appendChild(t);
+    }
+    t.style.background = isError ? '#450a0a' : '#14532d';
+    t.style.color      = isError ? '#f87171' : '#4ade80';
+    t.style.border     = `1px solid ${isError ? '#7f1d1d' : '#166534'}`;
+    t.textContent = msg; t.style.opacity = 1;
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.style.opacity = 0; }, 3500);
+  }
+
+  // ── Polling engine ──────────────────────────────────────────────────────
+  const POLL_INTERVAL_MS  = 10000;   // check every 10 s
+  const BACKEND_CHECK_MS  = 30000;   // backend health every 30 s
+
+  let pollTimer    = null;
+  let pollPaused   = false;
+  let lastChatIds  = new Set();      // session IDs seen so far
+  let lastEmailIds = new Set();      // email IDs seen so far
+
+  function togglePolling() {
+    pollPaused = !pollPaused;
+    const pill = document.getElementById('livePill');
+    const txt  = document.getElementById('liveText');
+    if (pollPaused) {
+      pill.classList.add('paused');
+      txt.textContent = 'PAUSED';
+      clearTimeout(pollTimer);
+    } else {
+      pill.classList.remove('paused');
+      txt.textContent = 'LIVE';
+      schedulePoll(0);   // poll immediately on resume
+    }
+  }
+
+  function schedulePoll(delay = POLL_INTERVAL_MS) {
+    clearTimeout(pollTimer);
+    if (!pollPaused) pollTimer = setTimeout(runPoll, delay);
+  }
+
+  async function runPoll() {
+    await pollChats();
+    await pollEmails();
+    schedulePoll();   // reschedule after completion
+  }
+
+  async function pollChats() {
+    try {
+      const r = await fetch(`${BASE}/records`, { signal: AbortSignal.timeout(6000) });
+      if (!r.ok) return;
+      const data = await r.json();
+
+      const map = new Map();
+      for (const rec of (data.data || [])) {
+        const sid = rec.session_id || 'default';
+        if (sid.startsWith('email-')) continue;
+        if (!map.has(sid)) map.set(sid, []);
+        map.get(sid).push(rec);
+      }
+
+      const newIds = Array.from(map.keys()).filter(id => !lastChatIds.has(id));
+      const updatedIds = Array.from(map.keys()).filter(id => {
+        const existing = allItems.find(i => i.id === id && i.type === 'chat');
+        return existing && map.get(id).length > (existing.messages || []).length;
+      });
+
+      if (newIds.length > 0 || updatedIds.length > 0) {
+        // Rebuild chat items and merge silently
+        const chatItems = Array.from(map.entries()).map(([sid, msgs]) => {
+          const sents = msgs.map(m => m.sentiment);
+          const sentiment = sents.includes('NEGATIVE') ? 'NEGATIVE'
+                          : sents.includes('POSITIVE') ? 'POSITIVE' : 'NEUTRAL';
+          const last = msgs[msgs.length - 1];
+          return {
+            type: 'chat', id: sid,
+            from: `Customer #${sid.slice(0,8)}`,
+            subject: '', preview: last?.text?.slice(0, 60) || '',
+            sentiment, date: '', msgCount: msgs.length, messages: msgs, raw: null,
+          };
+        });
+        allItems = [...allItems.filter(i => i.type === 'email'), ...chatItems].reverse();
+        renderInboxList(getFiltered());
+
+        if (newIds.length > 0) {
+          showBadge(newIds.length, 'chat');
+          showToast(`${newIds.length} new chat session${newIds.length > 1 ? 's' : ''}`);
+          // Auto-process each new chat session
+          for (const id of newIds) {
+            const chatItem = allItems.find(i => i.id === id && i.type === 'chat');
+            if (chatItem) autoProcessItem(chatItem);
+          }
+        } else if (updatedIds.length > 0) {
+          showToast(`${updatedIds.length} chat${updatedIds.length > 1 ? 's' : ''} updated`);
+        }
+      }
+
+      // Update known IDs
+      map.forEach((_, id) => lastChatIds.add(id));
+    } catch { /* silent — don't alert on poll errors */ }
+  }
+
+  async function pollEmails() {
+    // Only poll email if connected
+    const pill = document.getElementById('emailPill');
+    if (!pill || pill.classList.contains('disconnected')) return;
+
+    try {
+      const r = await fetch(`${BASE}/email/fetch?limit=20`, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.status !== 'ok') return;
+
+      const fetched = d.emails || [];
+      const newEmails = fetched.filter(e => !lastEmailIds.has(e.id));
+
+      if (newEmails.length > 0) {
+        // Prepend new emails to allItems without touching current thread
+        const emailItems = fetched.map(e => {
+          const existing = allItems.find(i => i.id === 'email-' + e.id);
+          return existing || {
+            type: 'email', id: 'email-' + e.id,
+            from: e.from_addr, subject: e.subject,
+            preview: e.subject || '(no subject)',
+            sentiment: 'NEUTRAL', date: e.date, msgCount: 1, raw: e,
+          };
+        });
+        allItems = [...emailItems, ...allItems.filter(i => i.type === 'chat')];
+        renderInboxList(getFiltered());
+
+        showBadge(newEmails.length, 'email');
+        showToast(`${newEmails.length} new email${newEmails.length > 1 ? 's' : ''} received`);
+        checkEmailStatus();   // update unread count in header
+
+        // Auto-process each newly arrived email
+        for (const e of newEmails) {
+          const emailItem = allItems.find(i => i.id === 'email-' + e.id);
+          if (emailItem) autoProcessItem(emailItem);
+        }
+      }
+
+      fetched.forEach(e => lastEmailIds.add(e.id));
+    } catch { /* silent */ }
+  }
+
+  // Show a temporary "N new" badge next to the inbox count
+  function showBadge(count, type) {
+    const countEl = document.getElementById('inboxCount');
+    if (!countEl) return;
+    const old = countEl.querySelector('.new-badge');
+    if (old) old.remove();
+    const badge = document.createElement('span');
+    badge.className = 'new-badge';
+    badge.textContent = `+${count} new`;
+    countEl.appendChild(badge);
+    setTimeout(() => badge?.remove(), 8000);
+  }
+
+  // ── Status banner rendered inside thread-messages ──
+  function renderStatusBanner(item) {
+    if (!item.status || item.status === 'pending') return '';
+
+    if (item.status === 'processing') {
+      return `<div class="handled-banner" style="border-color:#1a3a5a;background:#0a1828">
+        <div class="icon">&#8987;</div>
+        <span style="color:#7dd3fc">AI is processing this conversation...</span>
+      </div>`;
+    }
+
+    if (item.status === 'needs-human') {
+      const reason = esc(item.routeReason || 'AI could not confidently resolve this issue.');
+      const id     = esc(item.id);
+      return `<div class="escalation-banner">
+        <div class="escalation-icon">&#9888;</div>
+        <div class="escalation-body">
+          <div class="escalation-title">Needs Human Review</div>
+          <div class="escalation-reason">${reason}</div>
+          <div class="escalation-actions">
+            <button class="btn btn-secondary" style="font-size:12px;padding:5px 10px"
+              onclick="markHandled('${id}')">&#10003; Mark Resolved</button>
+            <button class="btn btn-primary" style="font-size:12px;padding:5px 10px"
+              onclick="takeOver('${id}')">&#128100; Take Over</button>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    if (item.status === 'human-handling') {
+      return `<div class="handled-banner" style="border-color:#1a3a5a;background:#0a1828">
+        <div class="icon">&#128100;</div>
+        <span style="color:#7dd3fc">Human operator is handling this conversation.</span>
+        <button class="btn btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 9px"
+          onclick="resetStatus('${esc(item.id)}')">Reopen to AI</button>
+      </div>`;
+    }
+
+    if (item.status === 'ai-handled') {
+      const sent = item.autoReply?.send_status === 'sent' ? ' — reply sent to customer' : '';
+      return `<div class="handled-banner">
+        <div class="icon">&#10003;</div>
+        <span>AI handled this conversation${sent}.</span>
+        <button class="btn btn-secondary" style="margin-left:auto;font-size:11px;padding:4px 9px"
+          onclick="takeOver('${esc(item.id)}')">&#128100; Take Over</button>
+      </div>`;
+    }
+
+    return '';
+  }
+
+  // ── Update a single inbox item's DOM without re-rendering the full list ──
+  function updateItemInList(item) {
+    const el = document.querySelector(`.inbox-item[data-id="${CSS.escape(item.id)}"]`);
+    if (!el) { renderInboxList(getFiltered()); return; }
+
+    const STATUS_CLS = ['ai-handled','needs-human','processing','human-handling','pending'];
+    STATUS_CLS.forEach(c => el.classList.remove(c));
+    if (item.status) el.classList.add(item.status);
+
+    const footer = el.querySelector('.inbox-item-footer');
+    if (footer) {
+      footer.querySelectorAll('.status-badge').forEach(b => b.remove());
+      const STATUS_LABEL = {
+        'ai-handled':    '&#10003; AI Handled',
+        'needs-human':   '&#9888; Needs Human',
+        'processing':    '&#8987; Processing',
+        'human-handling':'&#128100; Human Handling',
+      };
+      if (item.status && STATUS_LABEL[item.status]) {
+        const badge = document.createElement('span');
+        badge.className = `badge-sm status-badge ${item.status}`;
+        badge.innerHTML = STATUS_LABEL[item.status];
+        footer.appendChild(badge);
+      }
+    }
+  }
+
+  // ── Auto-process a conversation via /auto-reply ──
+  async function autoProcessItem(item) {
+    if (!item) return;
+    if (item.status === 'processing' || item.status === 'ai-handled' || item.status === 'human-handling') return;
+
+    item.status = 'processing';
+    updateItemInList(item);
+    if (activeId === item.id) {
+      const msgs = document.getElementById('threadMessages');
+      if (msgs) {
+        // Remove old banner if present
+        msgs.querySelector('.escalation-banner, .handled-banner')?.remove();
+        msgs.insertAdjacentHTML('afterbegin', renderStatusBanner(item));
+      }
+    }
+
+    try {
+      // For email items ensure body is loaded before processing
+      if (item.type === 'email' && item.raw && item.raw.body == null) {
+        const emailSeqId = item.id.replace('email-', '');
+        try {
+          const br = await fetch(`${BASE}/email/body/${emailSeqId}`);
+          const bd = await br.json();
+          if (bd.status === 'ok') item.raw.body = bd.body;
+        } catch {}
+      }
+
+      const text = item.type === 'email'
+        ? (item.raw?.body || item.raw?.subject || '').slice(0, 512)
+        : (item.messages?.slice(-1)[0]?.text || '').slice(0, 512);
+
+      if (!text) {
+        item.status = 'needs-human';
+        item.routeReason = 'No message content available to process.';
+        updateItemInList(item);
+        refreshBannerIfOpen(item);
+        return;
+      }
+
+      const payload = {
+        text,
+        session_id:  item.id,
+        from_addr:   item.type === 'email' ? (item.raw?.from_addr || '') : '',
+        subject:     item.type === 'email' ? (item.raw?.subject || '') : '',
+        message_id:  item.type === 'email' ? (item.raw?.message_id || '') : '',
+        send:        item.type === 'email',   // auto-send replies for emails
+      };
+
+      const r  = await fetch(`${BASE}/auto-reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+
+      if (d.status !== 'ok') throw new Error(d.message || 'auto-reply failed');
+
+      item.status      = d.can_handle ? 'ai-handled' : 'needs-human';
+      item.routeReason = d.route_reason || '';
+      item.autoReply   = d;
+
+      if (!aiReplies[item.id]) aiReplies[item.id] = [];
+      aiReplies[item.id].push({
+        response:     d.response,
+        context_used: d.context_used,
+        time:         nowTime(),
+        send_status:  d.send_status || 'draft',
+        can_handle:   d.can_handle,
+        route_reason: d.route_reason,
+        confidence:   d.confidence,
+      });
+
+      if (d.can_handle) {
+        showToast(`AI handled — ${d.send_status === 'sent' ? 'reply sent' : 'draft ready'}`);
+      } else {
+        showToast(`Escalated: ${d.route_reason || 'needs human review'}`, true);
+      }
+    } catch (err) {
+      item.status      = 'needs-human';
+      item.routeReason = 'Auto-processing error: ' + err.message;
+      showToast('Auto-reply failed — routed to human', true);
+    }
+
+    updateItemInList(item);
+    refreshBannerIfOpen(item);
+
+    // If thread is open, append the AI reply card
+    if (activeId === item.id && item.autoReply) {
+      const msgs = document.getElementById('threadMessages');
+      const reply = aiReplies[item.id]?.slice(-1)[0];
+      if (msgs && reply) { msgs.insertAdjacentHTML('beforeend', renderAiReply(reply)); scrollMsgs(); }
+    }
+  }
+
+  // Re-render the banner in the currently-open thread without full re-open
+  function refreshBannerIfOpen(item) {
+    if (activeId !== item.id) return;
+    const msgs = document.getElementById('threadMessages');
+    if (!msgs) return;
+    msgs.querySelector('.escalation-banner, .handled-banner')?.remove();
+    const banner = renderStatusBanner(item);
+    if (banner) msgs.insertAdjacentHTML('afterbegin', banner);
+    // Also update header badge
+    const meta = document.querySelector('.thread-meta');
+    if (meta) {
+      meta.querySelectorAll('.badge-sm.ai-handled,.badge-sm.needs-human,.badge-sm.processing,.badge-sm.human-handling').forEach(b => b.remove());
+      if (item.status) {
+        const STATUS_LABEL = {
+          'ai-handled':'&#10003; AI Handled','needs-human':'&#9888; Needs Human',
+          'processing':'&#8987; Processing','human-handling':'&#128100; Human Handling',
+        };
+        if (STATUS_LABEL[item.status]) {
+          const b = document.createElement('span');
+          b.className = `badge-sm ${item.status}`;
+          b.innerHTML = STATUS_LABEL[item.status];
+          meta.appendChild(b);
+        }
+      }
+    }
+  }
+
+  // ── Status action handlers ──
+  function takeOver(id) {
+    const item = allItems.find(i => i.id === id);
+    if (!item) return;
+    item.status = 'human-handling';
+    updateItemInList(item);
+    refreshBannerIfOpen(item);
+    showToast('You are now handling this conversation.');
+  }
+
+  function markHandled(id) {
+    const item = allItems.find(i => i.id === id);
+    if (!item) return;
+    item.status = 'ai-handled';
+    updateItemInList(item);
+    refreshBannerIfOpen(item);
+    showToast('Marked as resolved.');
+  }
+
+  function resetStatus(id) {
+    const item = allItems.find(i => i.id === id);
+    if (!item) return;
+    item.status = null;
+    item.routeReason = '';
+    item.autoReply = null;
+    updateItemInList(item);
+    refreshBannerIfOpen(item);
+    showToast('Conversation reopened for AI processing.');
+  }
+
+  // ── Init ──
+  checkBackend();
+  checkEmailStatus();
+  loadSessionChats();
+
+  // Seed known IDs after first load so first poll doesn't re-notify
+  setTimeout(async () => {
+    try {
+      const r = await fetch(`${BASE}/records`, { signal: AbortSignal.timeout(5000) });
+      const d = await r.json();
+      (d.data || []).forEach(rec => {
+        const sid = rec.session_id || 'default';
+        if (!sid.startsWith('email-')) lastChatIds.add(sid);
+      });
+    } catch {}
+    schedulePoll();   // start polling after seed
+  }, 2000);
+
+  // Keep backend health fresh
+  setInterval(checkBackend, BACKEND_CHECK_MS);
+</script>
+</body>
+</html>

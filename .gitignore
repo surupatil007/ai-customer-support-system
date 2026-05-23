@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+.env.txt
+email_config.json
+.claude/
+data.db
+*.db
+*.db-journal
